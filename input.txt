@@ -1,0 +1,27 @@
+// Programa de exemplo para a linguagem MiniLang.
+int limite = 5;
+float taxa = 1.5;
+
+int soma(int a, int b) {
+    int total = a + b;
+    return total;
+}
+
+void main() {
+    int i = 0;
+    int resultado = 0;
+
+    while (i < limite) {
+        resultado = soma(resultado, i);
+        i = i + 1;
+    }
+
+    if (resultado >= 10) {
+        float ajustado = resultado * taxa;
+        print(ajustado);
+    } else {
+        print(resultado);
+    }
+
+    return;
+}

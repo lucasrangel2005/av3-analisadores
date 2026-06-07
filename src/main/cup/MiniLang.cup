@@ -1,0 +1,535 @@
+package br.edu.compiladores.parser;
+
+import java_cup.runtime.Symbol;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Deque;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
+parser code {:
+  private static final String TYPE_INT = "int";
+  private static final String TYPE_FLOAT = "float";
+  private static final String TYPE_VOID = "void";
+  private static final String TYPE_BOOL = "bool";
+  private static final String TYPE_ERROR = "error";
+
+  private final List semanticErrors = new ArrayList();
+  private final List syntaxErrors = new ArrayList();
+  private final Map functions = new LinkedHashMap();
+  private final Deque scopes = new ArrayDeque();
+  private FunctionInfo currentFunction;
+
+  private static final class VariableInfo {
+    final String type;
+    final String name;
+
+    VariableInfo(String type, String name) {
+      this.type = type;
+      this.name = name;
+    }
+  }
+
+  private static final class FunctionInfo {
+    final String returnType;
+    final String name;
+    final List parameterTypes = new ArrayList();
+    boolean hasReturn;
+
+    FunctionInfo(String returnType, String name) {
+      this.returnType = returnType;
+      this.name = name;
+    }
+  }
+
+  private void initParserState() {
+    semanticErrors.clear();
+    syntaxErrors.clear();
+    functions.clear();
+    scopes.clear();
+    currentFunction = null;
+    enterScope();
+  }
+
+  public boolean hasErrors() {
+    return !syntaxErrors.isEmpty() || !semanticErrors.isEmpty();
+  }
+
+  public void printSemanticReport() {
+    if (syntaxErrors.isEmpty()) {
+      System.out.println("[OK] Analise sintatica concluida.");
+    } else {
+      System.out.println("[ERRO] Analise sintatica encontrou " + syntaxErrors.size() + " problema(s):");
+      for (Object error : syntaxErrors) {
+        System.out.println("  - " + error);
+      }
+    }
+
+    if (semanticErrors.isEmpty()) {
+      System.out.println("[OK] Analise semantica concluida.");
+      System.out.println("     Funcoes reconhecidas: " + functions.keySet());
+    } else {
+      System.out.println("[ERRO] Analise semantica encontrou " + semanticErrors.size() + " problema(s):");
+      for (Object error : semanticErrors) {
+        System.out.println("  - " + error);
+      }
+    }
+  }
+
+  public void syntax_error(Symbol token) {
+    syntaxErrors.add("Token inesperado " + tokenName(token) + " na linha " + token.left + ", coluna " + token.right + ".");
+  }
+
+  public void unrecovered_syntax_error(Symbol token) throws Exception {
+    syntax_error(token);
+    throw new Exception("Erro sintatico irrecuperavel.");
+  }
+
+  private String tokenName(Symbol token) {
+    if (token == null) {
+      return "<EOF>";
+    }
+    if (token.sym >= 0 && token.sym < sym.terminalNames.length) {
+      return sym.terminalNames[token.sym];
+    }
+    return "#" + token.sym;
+  }
+
+  private void semanticError(int line, String message) {
+    if (line <= 0) {
+      semanticErrors.add(message);
+    } else {
+      semanticErrors.add("Linha " + line + ": " + message);
+    }
+  }
+
+  private void enterScope() {
+    scopes.push(new LinkedHashMap());
+  }
+
+  private void exitScope() {
+    if (!scopes.isEmpty()) {
+      scopes.pop();
+    }
+  }
+
+  private Map currentScope() {
+    return (Map) scopes.peek();
+  }
+
+  private void declareVariable(String type, String name, int line) {
+    if (TYPE_VOID.equals(type)) {
+      semanticError(line, "Variavel '" + name + "' nao pode ter tipo void.");
+      return;
+    }
+
+    Map scope = currentScope();
+    if (scope.containsKey(name)) {
+      semanticError(line, "Identificador '" + name + "' ja foi declarado neste escopo.");
+      return;
+    }
+
+    if (scopes.size() == 1 && functions.containsKey(name)) {
+      semanticError(line, "Identificador global '" + name + "' conflita com uma funcao.");
+      return;
+    }
+
+    scope.put(name, new VariableInfo(type, name));
+  }
+
+  private String lookupVariable(String name, int line) {
+    for (Object scopeObject : scopes) {
+      Map scope = (Map) scopeObject;
+      VariableInfo variable = (VariableInfo) scope.get(name);
+      if (variable != null) {
+        return variable.type;
+      }
+    }
+
+    if (functions.containsKey(name)) {
+      semanticError(line, "'" + name + "' e uma funcao, nao uma variavel.");
+    } else {
+      semanticError(line, "Variavel '" + name + "' usada antes da declaracao.");
+    }
+    return TYPE_ERROR;
+  }
+
+  private void beginFunction(String returnType, String name, int line) {
+    if (functions.containsKey(name)) {
+      semanticError(line, "Funcao '" + name + "' ja foi declarada.");
+      currentFunction = new FunctionInfo(returnType, name);
+    } else {
+      currentFunction = new FunctionInfo(returnType, name);
+      functions.put(name, currentFunction);
+    }
+    enterScope();
+  }
+
+  private void addParameter(String type, String name, int line) {
+    if (currentFunction != null) {
+      currentFunction.parameterTypes.add(type);
+    }
+    declareVariable(type, name, line);
+  }
+
+  private void endFunction() {
+    if (currentFunction != null && !TYPE_VOID.equals(currentFunction.returnType) && !currentFunction.hasReturn) {
+      semanticError(0, "Funcao '" + currentFunction.name + "' deve possuir ao menos um return com valor.");
+    }
+    exitScope();
+    currentFunction = null;
+  }
+
+  private void checkProgram() {
+    FunctionInfo main = (FunctionInfo) functions.get("main");
+    if (main == null) {
+      semanticError(0, "Programa deve declarar a funcao main.");
+      return;
+    }
+    if (!TYPE_VOID.equals(main.returnType)) {
+      semanticError(0, "Funcao main deve retornar void nesta linguagem.");
+    }
+    if (!main.parameterTypes.isEmpty()) {
+      semanticError(0, "Funcao main nao deve receber parametros.");
+    }
+  }
+
+  private boolean isNumeric(String type) {
+    return TYPE_INT.equals(type) || TYPE_FLOAT.equals(type);
+  }
+
+  private boolean isAssignable(String target, String value) {
+    if (TYPE_ERROR.equals(target) || TYPE_ERROR.equals(value)) {
+      return true;
+    }
+    if (target.equals(value)) {
+      return true;
+    }
+    return TYPE_FLOAT.equals(target) && TYPE_INT.equals(value);
+  }
+
+  private void checkAssignment(String target, String value, int line) {
+    if (!isAssignable(target, value)) {
+      semanticError(line, "Tipo '" + value + "' nao pode ser atribuido a '" + target + "'.");
+    }
+  }
+
+  private String arithmetic(String left, String right, String op, int line) {
+    if (!isNumeric(left) || !isNumeric(right)) {
+      semanticError(line, "Operador '" + op + "' exige operandos numericos.");
+      return TYPE_ERROR;
+    }
+    if (TYPE_FLOAT.equals(left) || TYPE_FLOAT.equals(right)) {
+      return TYPE_FLOAT;
+    }
+    return TYPE_INT;
+  }
+
+  private String compare(String left, String right, String op, int line) {
+    if (!isNumeric(left) || !isNumeric(right)) {
+      semanticError(line, "Operador relacional '" + op + "' exige operandos numericos.");
+      return TYPE_ERROR;
+    }
+    return TYPE_BOOL;
+  }
+
+  private String logic(String left, String right, String op, int line) {
+    if (!TYPE_BOOL.equals(left) || !TYPE_BOOL.equals(right)) {
+      semanticError(line, "Operador logico '" + op + "' exige expressoes booleanas.");
+      return TYPE_ERROR;
+    }
+    return TYPE_BOOL;
+  }
+
+  private String logicalNot(String value, int line) {
+    if (!TYPE_BOOL.equals(value)) {
+      semanticError(line, "Operador '!' exige expressao booleana.");
+      return TYPE_ERROR;
+    }
+    return TYPE_BOOL;
+  }
+
+  private void checkCondition(String type, int line, String command) {
+    if (!TYPE_BOOL.equals(type)) {
+      semanticError(line, "Condicao do comando '" + command + "' deve ser booleana.");
+    }
+  }
+
+  private void checkReturnWithoutValue(int line) {
+    if (currentFunction == null) {
+      semanticError(line, "Return fora de funcao.");
+      return;
+    }
+    currentFunction.hasReturn = true;
+    if (!TYPE_VOID.equals(currentFunction.returnType)) {
+      semanticError(line, "Funcao '" + currentFunction.name + "' deve retornar valor do tipo '" + currentFunction.returnType + "'.");
+    }
+  }
+
+  private void checkReturnWithValue(String valueType, int line) {
+    if (currentFunction == null) {
+      semanticError(line, "Return fora de funcao.");
+      return;
+    }
+    currentFunction.hasReturn = true;
+    if (TYPE_VOID.equals(currentFunction.returnType)) {
+      semanticError(line, "Funcao void '" + currentFunction.name + "' nao deve retornar valor.");
+      return;
+    }
+    if (!isAssignable(currentFunction.returnType, valueType)) {
+      semanticError(line, "Return da funcao '" + currentFunction.name + "' deveria ser '" + currentFunction.returnType + "', mas recebeu '" + valueType + "'.");
+    }
+  }
+
+  private String callFunction(String name, List args, int line) {
+    FunctionInfo function = (FunctionInfo) functions.get(name);
+    if (function == null) {
+      semanticError(line, "Chamada para funcao nao declarada '" + name + "'.");
+      return TYPE_ERROR;
+    }
+
+    if (function.parameterTypes.size() != args.size()) {
+      semanticError(line, "Funcao '" + name + "' espera " + function.parameterTypes.size() + " argumento(s), mas recebeu " + args.size() + ".");
+      return function.returnType;
+    }
+
+    for (int i = 0; i < args.size(); i++) {
+      String expected = (String) function.parameterTypes.get(i);
+      String found = (String) args.get(i);
+      if (!isAssignable(expected, found)) {
+        semanticError(line, "Argumento " + (i + 1) + " da funcao '" + name + "' deveria ser '" + expected + "', mas recebeu '" + found + "'.");
+      }
+    }
+    return function.returnType;
+  }
+:};
+
+init with {:
+  initParserState();
+:};
+
+terminal IF, ELSE, WHILE, RETURN, INT, FLOAT, VOID, PRINT;
+terminal PLUS, MINUS, TIMES, DIVIDE;
+terminal EQ, NE, LT, LE, GT, GE;
+terminal ASSIGN, AND, OR, NOT;
+terminal SEMI, COMMA, LPAREN, RPAREN, LBRACE, RBRACE;
+terminal UMINUS, LOWER_THAN_ELSE;
+terminal String ID;
+terminal Integer INT_LITERAL;
+terminal Double FLOAT_LITERAL;
+
+non terminal program, declaration_list, declaration;
+non terminal variable_declaration, function_declaration, function_header;
+non terminal parameters, parameter_list, parameter;
+non terminal compound_statement, compound_statement_function, local_declarations, statement_list, statement;
+non terminal expression_statement, selection_statement, iteration_statement, return_statement, print_statement;
+non terminal String type, type_no_void, expression, logical_or_expression, logical_and_expression;
+non terminal String equality_expression, relational_expression, additive_expression, multiplicative_expression, unary_expression, factor, relop;
+non terminal List arguments, argument_list;
+
+precedence right ASSIGN;
+precedence left OR;
+precedence left AND;
+precedence nonassoc EQ, NE, LT, LE, GT, GE;
+precedence left PLUS, MINUS;
+precedence left TIMES, DIVIDE;
+precedence right NOT, UMINUS;
+precedence nonassoc LOWER_THAN_ELSE;
+precedence nonassoc ELSE;
+
+start with program;
+
+program ::= declaration_list
+            {: checkProgram(); :}
+          ;
+
+declaration_list ::= declaration_list declaration
+                   | /* empty */
+                   ;
+
+declaration ::= variable_declaration
+              | function_declaration
+              ;
+
+variable_declaration ::= type:t ID:id SEMI
+                         {: declareVariable(t, id, idleft); :}
+                       | type:t ID:id ASSIGN expression:e SEMI
+                         {: declareVariable(t, id, idleft); checkAssignment(t, e, idleft); :}
+                       ;
+
+function_declaration ::= function_header compound_statement_function
+                         {: endFunction(); :}
+                       ;
+
+function_header ::= type:t ID:id LPAREN
+                    {: beginFunction(t, id, idleft); :}
+                    parameters RPAREN
+                  ;
+
+parameters ::= parameter_list
+             | VOID
+             | /* empty */
+             ;
+
+parameter_list ::= parameter_list COMMA parameter
+                 | parameter
+                 ;
+
+parameter ::= type_no_void:t ID:id
+              {: addParameter(t, id, idleft); :}
+            ;
+
+type ::= INT
+         {: RESULT = TYPE_INT; :}
+       | FLOAT
+         {: RESULT = TYPE_FLOAT; :}
+       | VOID
+         {: RESULT = TYPE_VOID; :}
+       ;
+
+type_no_void ::= INT
+                 {: RESULT = TYPE_INT; :}
+               | FLOAT
+                 {: RESULT = TYPE_FLOAT; :}
+               ;
+
+compound_statement_function ::= LBRACE local_declarations statement_list RBRACE
+                              ;
+
+compound_statement ::= LBRACE
+                       {: enterScope(); :}
+                       local_declarations statement_list RBRACE
+                       {: exitScope(); :}
+                     ;
+
+local_declarations ::= local_declarations variable_declaration
+                     | /* empty */
+                     ;
+
+statement_list ::= statement_list statement
+                 | /* empty */
+                 ;
+
+statement ::= expression_statement
+            | compound_statement
+            | selection_statement
+            | iteration_statement
+            | return_statement
+            | print_statement
+            ;
+
+expression_statement ::= expression SEMI
+                       | SEMI
+                       ;
+
+selection_statement ::= IF LPAREN expression:e RPAREN statement
+                        {: checkCondition(e, eleft, "if"); :}
+                        %prec LOWER_THAN_ELSE
+                      | IF LPAREN expression:e RPAREN statement ELSE statement
+                        {: checkCondition(e, eleft, "if"); :}
+                      ;
+
+iteration_statement ::= WHILE LPAREN expression:e RPAREN statement
+                        {: checkCondition(e, eleft, "while"); :}
+                      ;
+
+return_statement ::= RETURN:r SEMI
+                     {: checkReturnWithoutValue(rleft); :}
+                   | RETURN:r expression:e SEMI
+                     {: checkReturnWithValue(e, rleft); :}
+                   ;
+
+print_statement ::= PRINT LPAREN expression RPAREN SEMI
+                  ;
+
+expression ::= ID:id ASSIGN expression:e
+               {: String target = lookupVariable(id, idleft); checkAssignment(target, e, idleft); RESULT = target; :}
+             | logical_or_expression:e
+               {: RESULT = e; :}
+             ;
+
+logical_or_expression ::= logical_or_expression:l OR logical_and_expression:r
+                          {: RESULT = logic(l, r, "||", lleft); :}
+                        | logical_and_expression:e
+                          {: RESULT = e; :}
+                        ;
+
+logical_and_expression ::= logical_and_expression:l AND equality_expression:r
+                           {: RESULT = logic(l, r, "&&", lleft); :}
+                         | equality_expression:e
+                           {: RESULT = e; :}
+                         ;
+
+equality_expression ::= equality_expression:l EQ relational_expression:r
+                        {: RESULT = compare(l, r, "==", lleft); :}
+                      | equality_expression:l NE relational_expression:r
+                        {: RESULT = compare(l, r, "!=", lleft); :}
+                      | relational_expression:e
+                        {: RESULT = e; :}
+                      ;
+
+relational_expression ::= additive_expression:l relop:op additive_expression:r
+                          {: RESULT = compare(l, r, op, lleft); :}
+                        | additive_expression:e
+                          {: RESULT = e; :}
+                        ;
+
+relop ::= LT
+          {: RESULT = "<"; :}
+        | LE
+          {: RESULT = "<="; :}
+        | GT
+          {: RESULT = ">"; :}
+        | GE
+          {: RESULT = ">="; :}
+        ;
+
+additive_expression ::= additive_expression:l PLUS multiplicative_expression:r
+                        {: RESULT = arithmetic(l, r, "+", lleft); :}
+                      | additive_expression:l MINUS multiplicative_expression:r
+                        {: RESULT = arithmetic(l, r, "-", lleft); :}
+                      | multiplicative_expression:e
+                        {: RESULT = e; :}
+                      ;
+
+multiplicative_expression ::= multiplicative_expression:l TIMES unary_expression:r
+                              {: RESULT = arithmetic(l, r, "*", lleft); :}
+                            | multiplicative_expression:l DIVIDE unary_expression:r
+                              {: RESULT = arithmetic(l, r, "/", lleft); :}
+                            | unary_expression:e
+                              {: RESULT = e; :}
+                            ;
+
+unary_expression ::= MINUS unary_expression:e
+                     {: if (!isNumeric(e)) { semanticError(eleft, "Operador unario '-' exige operando numerico."); RESULT = TYPE_ERROR; } else { RESULT = e; } :}
+                     %prec UMINUS
+                   | NOT unary_expression:e
+                     {: RESULT = logicalNot(e, eleft); :}
+                   | factor:f
+                     {: RESULT = f; :}
+                   ;
+
+factor ::= LPAREN expression:e RPAREN
+           {: RESULT = e; :}
+         | ID:id
+           {: RESULT = lookupVariable(id, idleft); :}
+         | ID:id LPAREN arguments:a RPAREN
+           {: RESULT = callFunction(id, a, idleft); :}
+         | INT_LITERAL
+           {: RESULT = TYPE_INT; :}
+         | FLOAT_LITERAL
+           {: RESULT = TYPE_FLOAT; :}
+         ;
+
+arguments ::= argument_list:l
+              {: RESULT = l; :}
+            | /* empty */
+              {: RESULT = new ArrayList(); :}
+            ;
+
+argument_list ::= expression:e
+                  {: ArrayList list = new ArrayList(); list.add(e); RESULT = list; :}
+                | argument_list:l COMMA expression:e
+                  {: l.add(e); RESULT = l; :}
+                ;

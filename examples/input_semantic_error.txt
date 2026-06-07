@@ -1,0 +1,12 @@
+int soma(int a, int b) {
+    return a + b;
+}
+
+void main() {
+    int x = 2.5;
+    y = soma(x);
+    if (x) {
+        print(x);
+    }
+    return 1;
+}
