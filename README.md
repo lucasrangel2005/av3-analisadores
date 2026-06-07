@@ -11,7 +11,6 @@ Projeto da AV3 com JFlex, JCup e Java. A linguagem implementada e uma MiniLang i
 - `input.txt`: codigo-fonte de entrada valido.
 - `examples/input_semantic_error.txt`: entrada extra para demonstrar erros semanticos.
 - `scripts`: scripts de download, geracao, compilacao, execucao e teste.
-- `relatorio/relatorio-analisadores.pdf`: relatorio em PDF para apresentacao.
 
 ## Requisitos
 
@@ -67,14 +66,6 @@ A execucao imprime:
 ```
 
 O primeiro teste usa `input.txt` e deve passar. O segundo usa `examples/input_semantic_error.txt` e deve falhar, mostrando erros como incompatibilidade de tipos, variavel nao declarada, quantidade incorreta de argumentos e retorno invalido em funcao `void`.
-
-## Como regenerar o relatorio PDF
-
-```powershell
-.\scripts\report.ps1
-```
-
-O PDF sera criado em `relatorio/relatorio-analisadores.pdf`.
 
 ## Observacao sobre o nome da pasta no Windows
 
